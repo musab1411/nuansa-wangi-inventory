@@ -1,5 +1,9 @@
 """
-Central Inventory Server - Nuansa Wangi (FastAPI + Supabase/PostgreSQL)
+Central Inventory Server - Nuansa Wangi (FastAPI)
+
+Mendukung dua backend database, dipilih lewat DB_BACKEND:
+    postgres -> Supabase / PostgreSQL
+    mysql    -> MySQL 8.0+ / Laragon
 
 Endpoint:
     GET  /health            cek server + koneksi database
@@ -15,8 +19,6 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Literal, Optional
 
-import psycopg
-import psycopg_pool
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt, field_validator
@@ -29,13 +31,11 @@ logger = logging.getLogger("inventory.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not db.DATABASE_URL:
-        raise RuntimeError("DATABASE_URL belum diisi. Cek file .env kamu.")
-    logger.info("Membuka connection pool ke Supabase ...")
-    db.pool.open(wait=True, timeout=30)  # gagal jelas kalau kredensial/jaringan salah
-    logger.info("Server siap.")
+    logger.info("Membuka connection pool (%s) ...", db.BACKEND)
+    db.open_pool()  # gagal jelas kalau konfigurasi/kredensial/jaringan salah
+    logger.info("Server siap (backend: %s).", db.BACKEND)
     yield
-    db.pool.close()
+    db.close_pool()
 
 
 app = FastAPI(
@@ -71,10 +71,10 @@ def _err(status: int, code: str, message: str, **extra) -> HTTPException:
 
 
 # ----------------------------------------------------------------------
-# Error handler global untuk masalah koneksi database
+# Error handler global untuk masalah koneksi / lock database.
+# Exception domain ini sama untuk PostgreSQL maupun MySQL.
 # ----------------------------------------------------------------------
-@app.exception_handler(psycopg.OperationalError)
-@app.exception_handler(psycopg_pool.PoolTimeout)
+@app.exception_handler(db.DatabaseUnavailable)
 async def db_unavailable_handler(request: Request, exc: Exception):
     logger.error("Database tidak tersedia: %s", exc)
     return JSONResponse(
@@ -84,13 +84,23 @@ async def db_unavailable_handler(request: Request, exc: Exception):
     )
 
 
+@app.exception_handler(db.LockTimeout)
+async def lock_timeout_handler(request: Request, exc: Exception):
+    logger.warning("Lock timeout: %s", exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": {"code": "LOCK_TIMEOUT",
+                            "message": "Baris stok sedang dikunci transaksi lain terlalu lama, coba lagi."}},
+    )
+
+
 # ----------------------------------------------------------------------
 # Endpoint
 # ----------------------------------------------------------------------
 @app.get("/health")
 def health():
     db.ping()
-    return {"status": "ok", "database": "connected"}
+    return {"status": "ok", "database": "connected", "backend": db.BACKEND}
 
 
 @app.get("/items")
@@ -132,11 +142,9 @@ def update_stock(payload: StockUpdate):
     except db.RequestIdMismatch as e:
         raise _err(409, "REQUEST_ID_MISMATCH",
                    f"request_id '{e.request_id}' sudah dipakai untuk transaksi lain.")
-    except psycopg.errors.LockNotAvailable:
-        raise _err(503, "LOCK_TIMEOUT", "Baris stok sedang dikunci transaksi lain terlalu lama, coba lagi.")
-    except psycopg.errors.UniqueViolation:
+    except db.RequestIdConflict:
         raise _err(409, "REQUEST_ID_CONFLICT", "request_id yang sama sedang diproses bersamaan.")
-    except psycopg.errors.CheckViolation:
+    except db.ConstraintViolation:
         # Pengaman lapis kedua dari database (CHECK qty >= 0)
         raise _err(409, "CONSTRAINT_VIOLATION", "Transaksi melanggar aturan integritas stok (qty >= 0).")
 

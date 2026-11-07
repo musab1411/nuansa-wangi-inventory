@@ -1,8 +1,15 @@
 # Sistem Inventaris Multi-Cabang Nuansa Wangi (Client-Server)
 
 Project Sistem Terdistribusi: stok **Bibit Parfum (ml)** dan **Botol Parfum (pcs)** untuk 3 cabang
-(Empang, Cilendek, Cibinong) disimpan di **satu database terpusat (Supabase / PostgreSQL)** dan diakses lewat
+(Empang, Cilendek, Cibinong) disimpan di **satu database terpusat** dan diakses lewat
 **satu API Server (FastAPI)**. Konkurensi ditangani dengan **Pessimistic Locking** (`SELECT ... FOR UPDATE`).
+
+Database bisa memakai salah satu backend (dipilih lewat `DB_BACKEND`):
+
+| `DB_BACKEND` | Database | Dipakai untuk |
+|---|---|---|
+| `postgres` (default) | Supabase / PostgreSQL | setup utama |
+| `mysql` | MySQL 8.0+ (Laragon / XAMPP) | backup / development lokal tanpa internet |
 
 ## 1. Arsitektur
 
@@ -24,25 +31,34 @@ Project Sistem Terdistribusi: stok **Bibit Parfum (ml)** dan **Botol Parfum (pcs
 ```
 nuansa-wangi-inventory/
 ├── docker-compose.yml        # 1 server + 3 node cabang
-├── .env.example              # salin jadi .env, isi DATABASE_URL Supabase
+├── .env.example              # salin jadi .env, pilih DB_BACKEND + isi kredensial
 ├── database/
-│   ├── schema.sql            # tabel + constraint + data awal (jalankan di Supabase SQL Editor)
-│   └── reset_demo.sql        # reset stok & riwayat ke kondisi awal
+│   ├── schema.sql            # PostgreSQL: tabel + constraint + data awal (Supabase SQL Editor)
+│   ├── reset_demo.sql        # PostgreSQL: reset stok & riwayat ke kondisi awal
+│   ├── schema.mysql.sql      # MySQL 8.0+: versi portabel (phpMyAdmin / HeidiSQL / CLI)
+│   └── reset_demo.mysql.sql  # MySQL 8.0+: reset stok & riwayat
 ├── server/                   # Central Inventory Server (FastAPI)
 │   ├── Dockerfile
-│   ├── requirements.txt
-│   └── app/ (main.py, db.py)
+│   ├── requirements.txt      # dependensi + psycopg (PostgreSQL)
+│   ├── requirements-mysql.txt # dependensi + PyMySQL/DBUtils (MySQL)
+│   └── app/
+│       ├── main.py           # endpoint, validasi, pemetaan error (backend-agnostic)
+│       ├── db.py             # facade: pilih backend dari DB_BACKEND
+│       ├── db_postgres.py    # implementasi PostgreSQL (psycopg)
+│       ├── db_mysql.py       # implementasi MySQL (PyMySQL + DBUtils)
+│       └── errors.py         # exception domain bersama
 └── client/                   # Node cabang + pengujian
     ├── Dockerfile
     ├── requirements.txt
     ├── branch_client.py      # CLI cabang
-    └── test_scenarios.py     # pengujian otomatis 3 skenario
+    └── test_scenarios.py     # pengujian otomatis 39 pemeriksaan
 ```
 
 ## 3. Prasyarat
 
 - Docker Desktop / Docker Engine + **Docker Compose v2** (`docker compose version`)
 - Akun Supabase (free tier cukup) dengan 1 project
+- **Alternatif MySQL:** Laragon / XAMPP dengan MySQL 8.0+ (tanpa Docker, tanpa internet)
 - (Opsional, untuk test dari host) Python 3.10+ dan `pip install requests`
 
 ## 4. Instalasi & Menjalankan
@@ -90,6 +106,96 @@ Swagger UI (bisa dicoba langsung dari browser): **http://localhost:8000/docs**
 docker compose down        # stop & hapus container (data tetap aman di Supabase)
 ```
 
+### Alternatif backend: MySQL 8.0 / Laragon (tanpa Supabase)
+
+Cocok untuk backup/development lokal di laptop lain, misalnya saat tidak ada internet.
+Semua fitur (row lock, idempotensi, audit log, 39 pengujian) tetap sama; hanya driver
+dan sedikit detail SQL yang berbeda.
+
+**Prasyarat:** Laragon dengan **MySQL 8.0+** (8.0.30 sudah diuji) dan Python 3.10+.
+
+**Langkah 1 - Nyalakan MySQL**
+Buka Laragon -> **Start All**. Pastikan port `3306` tidak dipakai aplikasi lain.
+
+**Langkah 2 - Buat database + tabel**
+- Cara GUI: buka **phpMyAdmin** (`http://localhost/phpmyadmin`) -> tab **Import** ->
+  pilih `database/schema.mysql.sql` -> **Go**.
+- Cara CLI:
+  ```bash
+  mysql -u root < database/schema.mysql.sql
+  ```
+File itu membuat database `nuansa_wangi`, 3 tabel, constraint, index idempotensi,
+dan data awal (3 cabang + 4 SKU). Aman dijalankan berulang (`IF NOT EXISTS` + `INSERT IGNORE`).
+
+**Langkah 3 - Arahkan aplikasi ke MySQL**
+Salin `.env.example` menjadi `.env`, lalu set:
+```dotenv
+DB_BACKEND=mysql
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=
+MYSQL_DATABASE=nuansa_wangi
+```
+`DATABASE_URL` boleh dibiarkan (diabaikan saat `DB_BACKEND=mysql`). Default Laragon:
+user `root`, password kosong.
+
+**Langkah 4 - Install dependensi**
+```bash
+# kalau HANYA memakai MySQL (tanpa psycopg):
+pip install -r server/requirements-mysql.txt
+# kalau ingin dua-duanya (PostgreSQL + MySQL):
+pip install -r server/requirements.txt -r server/requirements-mysql.txt
+```
+
+**Langkah 5 - Jalankan server**
+```bash
+cd server
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+File `.env` di root project dibaca otomatis lewat `python-dotenv`, jadi tidak perlu
+mengatur environment variable secara manual.
+Cek: `curl http://localhost:8000/health` harus membalas
+`{"status":"ok","database":"connected","backend":"mysql"}`.
+
+**Langkah 6 - Jalankan pengujian**
+```bash
+python client/test_scenarios.py
+```
+Target hasil: `Lulus : 39`, `Gagal : 0`. Setelah selesai, stok dikembalikan ke angka awal.
+
+**Langkah 7 - Reset data demo (opsional)**
+Jalankan `database/reset_demo.mysql.sql` lewat phpMyAdmin/CLI:
+```bash
+mysql -u root nuansa_wangi < database/reset_demo.mysql.sql
+```
+
+**Catatan teknis MySQL**
+
+| Hal | PostgreSQL | MySQL (implementasi ini) |
+|---|---|---|
+| Idempotensi | partial unique index `WHERE status='SUCCESS'` | generated column `request_id_success` + `UNIQUE` index |
+| `UPDATE ... RETURNING` | didukung | `UPDATE` lalu `SELECT` ulang |
+| `INSERT ... RETURNING id` | didukung | `cursor.lastrowid` |
+| Isolation | default `READ COMMITTED` | dipaksa `READ COMMITTED` per sesi (default MySQL `REPEATABLE READ`) |
+| Lock timeout | `set_config('lock_timeout')` | `innodb_lock_wait_timeout` |
+| Error driver | `LockNotAvailable`, `UniqueViolation`, ... | errno `1205/1213`, `1062`, `3819`, `1452` |
+| RLS | aktif (menutup REST Supabase) | tidak ada; jangan buka port MySQL ke internet |
+
+- `READ COMMITTED` wajib: dengan `REPEATABLE READ`, pengecekan `request_id` bisa membaca snapshot lama
+  sehingga request kedua lolos dan menabrak unique index.
+- Docker Compose pada repo ini tetap menunjuk PostgreSQL. Untuk MySQL, jalankan API langsung
+  dari host (Laragon) seperti langkah di atas; container tidak bisa menjangkau MySQL di
+  `127.0.0.1` laptop tanpa konfigurasi tambahan (`host.docker.internal`).
+- Untuk pemakaian jangka panjang, buat user khusus aplikasi (bukan `root`) dan batasi grant-nya:
+  ```sql
+  CREATE USER 'nuansa'@'localhost' IDENTIFIED BY 'password_kuat';
+  GRANT SELECT, INSERT, UPDATE ON nuansa_wangi.* TO 'nuansa'@'localhost';
+  ```
+- Kalau MySQL memakai `caching_sha2_password` dan login gagal, tambahkan paket `cryptography`
+  atau buat user dengan `IDENTIFIED WITH mysql_native_password BY '...'`.
+
+
 ## 5. Menjalankan Pengujian Otomatis
 
 **Cara A - dari dalam container cabang** (memakai jaringan Docker sungguhan, `API_URL=http://api:8000`):
@@ -116,7 +222,8 @@ Isi skenario:
 | 3B | **Koneksi gagal** + retry | Server mati terdeteksi tanpa crash; retry `request_id` sama tidak memotong stok dua kali (idempotent); `request_id` sama tapi isi beda -> 409 |
 
 Hasil yang diharapkan di akhir: `Lulus : 39`, `Gagal : 0`, `HASIL : SEMUA SKENARIO LULUS` (exit code 0).
-Test mengembalikan stok ke angka awal setelah selesai; riwayat `[TEST]` tetap tersimpan di `/logs` (hapus dengan `database/reset_demo.sql`).
+Test mengembalikan stok ke angka awal setelah selesai; riwayat `[TEST]` tetap tersimpan di `/logs`
+(hapus dengan `database/reset_demo.sql` untuk PostgreSQL atau `database/reset_demo.mysql.sql` untuk MySQL).
 
 **Bonus - demo paralel dari dua container berbeda** (bash / Git Bash / WSL):
 ```bash
@@ -174,7 +281,8 @@ Kode respons:
 
 ## 8. Cara Kerja Pengendalian Konkurensi
 
-Alur satu transaksi di `server/app/db.py` (`apply_stock_update`):
+Alur satu transaksi di `server/app/db_postgres.py` atau `server/app/db_mysql.py`
+(keduanya mengekspos `apply_stock_update` yang sama):
 
 ```
 BEGIN
@@ -209,6 +317,11 @@ COMMIT                                                           <- lock dilepas
 | `port is already allocated` (8000) | Ubah mapping port `api` jadi mis. `"8001:8000"` lalu pakai `API_URL=http://localhost:8001` |
 | Respons `503 LOCK_TIMEOUT` | Baris stok dikunci terlalu lama; naikkan `LOCK_TIMEOUT_MS` di `.env` |
 | Password mengandung `@ # $ /` | Reset password jadi huruf+angka, atau URL-encode di `DATABASE_URL` |
+| MySQL: `Can't connect to MySQL server` | Laragon belum **Start All**, atau port `3306` bentrok |
+| MySQL: `Unknown database 'nuansa_wangi'` | `database/schema.mysql.sql` belum dijalankan |
+| MySQL: `1045 Access denied` | `MYSQL_USER`/`MYSQL_PASSWORD` salah (Laragon default: `root`, kosong) |
+| MySQL: `503 DB_UNAVAILABLE` sesaat setelah start | MySQL belum siap; tunggu sampai Laragon hijau, lalu ulangi |
+| MySQL: `caching_sha2_password` | `pip install cryptography`, atau buat user dengan `mysql_native_password` |
 
 Memakai **Transaction pooler** (port 6543) juga didukung; kode sudah mematikan prepared statement untuk itu.
 
