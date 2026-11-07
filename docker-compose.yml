@@ -1,0 +1,80 @@
+# Sistem Inventaris Multi-Cabang Nuansa Wangi
+# Topologi Star (hub-and-spoke) di Docker bridge network jmk48-net (172.28.0.0/24)
+#
+#   branch-a (.11) ─┐
+#   branch-b (.12) ─┼─ HTTP REST JSON ─> api (.2:8000) ── TCP/SQL (internet) ──> Supabase PostgreSQL
+#   branch-c (.13) ─┘
+#
+# Database = Supabase (cloud), jadi TIDAK ada container database di sini.
+
+name: nuansa-wangi
+
+x-branch: &branch
+  build: ./client
+  image: nuansa-wangi-branch:latest
+  restart: unless-stopped
+  depends_on:
+    api:
+      condition: service_healthy
+
+services:
+  api:
+    build: ./server
+    container_name: nw-api
+    env_file: .env                # berisi DATABASE_URL Supabase
+    ports:
+      - "8000:8000"               # supaya bisa diakses dari host (Postman / browser / test dari host)
+    networks:
+      jmk48-net:
+        ipv4_address: 172.28.0.2
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 10s
+      timeout: 8s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+
+  branch-a:
+    <<: *branch
+    container_name: nw-branch-a
+    hostname: branch-a
+    environment:
+      BRANCH_ID: branch-a
+      BRANCH_NAME: Cabang Empang
+      API_URL: http://api:8000
+    networks:
+      jmk48-net:
+        ipv4_address: 172.28.0.11
+
+  branch-b:
+    <<: *branch
+    container_name: nw-branch-b
+    hostname: branch-b
+    environment:
+      BRANCH_ID: branch-b
+      BRANCH_NAME: Cabang Cilendek
+      API_URL: http://api:8000
+    networks:
+      jmk48-net:
+        ipv4_address: 172.28.0.12
+
+  branch-c:
+    <<: *branch
+    container_name: nw-branch-c
+    hostname: branch-c
+    environment:
+      BRANCH_ID: branch-c
+      BRANCH_NAME: Cabang Cibinong
+      API_URL: http://api:8000
+    networks:
+      jmk48-net:
+        ipv4_address: 172.28.0.13
+
+networks:
+  jmk48-net:
+    name: jmk48-net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
