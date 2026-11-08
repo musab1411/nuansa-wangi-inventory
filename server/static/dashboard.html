@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nuansa Wangi - Dashboard Inventaris</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8C%B8%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/dashboard.css" />
+</head>
+<body>
+  <!-- ================= LOGIN ================= -->
+  <main id="login-view" class="login-view">
+    <form id="login-form" class="login-card" autocomplete="off">
+      <div class="brand-mark">NW</div>
+      <h1>Nuansa Wangi</h1>
+      <p class="muted">Dashboard Inventaris Multi-Cabang</p>
+
+      <label for="api-key">API Key Cabang / Admin</label>
+      <input id="api-key" name="api-key" type="password" placeholder="nw-demo-branch-a-..." autocomplete="off" spellcheck="false" required />
+      <p class="hint">Kunci hanya disimpan di <code>sessionStorage</code> browser ini dan ikut terhapus saat tab ditutup.</p>
+
+      <button type="submit" id="login-btn">Masuk</button>
+      <p id="login-error" class="error" role="alert" hidden></p>
+
+      <details class="demo-keys">
+        <summary>Kunci demo (latihan)</summary>
+        <ul>
+          <li><code>nw-demo-branch-a-7f3a9c1e</code> &mdash; Cabang Empang</li>
+          <li><code>nw-demo-branch-b-2b8d4f6a</code> &mdash; Cabang Cilendek</li>
+          <li><code>nw-demo-branch-c-9c5e7a1d</code> &mdash; Cabang Cibinong</li>
+          <li><code>nw-demo-admin-4d2f8b6c</code> &mdash; Admin (semua cabang)</li>
+        </ul>
+        <p class="hint">Ganti kunci sebelum dipakai sungguhan: <code>python scripts/manage_keys.py rotate --branch branch-a</code></p>
+      </details>
+    </form>
+  </main>
+
+  <!-- ================= APP ================= -->
+  <div id="app-view" class="app-view" hidden>
+    <header class="topbar">
+      <div class="topbar-left">
+        <span class="brand-mark small">NW</span>
+        <div>
+          <h1>Nuansa Wangi</h1>
+          <p class="muted" id="identity">-</p>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <span id="backend-badge" class="badge" title="Backend database">-</span>
+        <span id="live-badge" class="badge live" title="Auto-refresh aktif">&#9679; live</span>
+        <button type="button" id="refresh-btn" class="ghost" title="Muat ulang data">&#8635; Refresh</button>
+        <button type="button" id="logout-btn" class="ghost danger" title="Hapus kunci dari sesi ini">Keluar</button>
+      </div>
+    </header>
+
+    <!-- Ringkasan admin -->
+    <section id="summary-section" class="summary-grid" hidden>
+      <div class="stat"><span class="stat-label">Jenis Barang</span><span class="stat-value" id="stat-items">-</span></div>
+      <div class="stat"><span class="stat-label">Total Stok</span><span class="stat-value" id="stat-qty">-</span></div>
+      <div class="stat success"><span class="stat-label">Transaksi Sukses</span><span class="stat-value" id="stat-success">-</span></div>
+      <div class="stat rejected"><span class="stat-label">Transaksi Ditolak</span><span class="stat-value" id="stat-rejected">-</span></div>
+      <div class="stat wide"><span class="stat-label">Transaksi Terakhir</span><span class="stat-value small" id="stat-last">-</span></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Stok Terpusat</h2>
+        <span class="muted" id="items-updated"></span>
+      </div>
+      <div id="items-grid" class="items-grid">
+        <p class="muted">Memuat stok&hellip;</p>
+      </div>
+    </section>
+
+    <div class="two-col">
+      <!-- Form update stok -->
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Tambah / Kurangi Stok</h2>
+        </div>
+        <form id="update-form" class="update-form">
+          <div class="field" id="branch-field" hidden>
+            <label for="update-branch">Cabang (admin)</label>
+            <select id="update-branch" required></select>
+          </div>
+
+          <div class="field">
+            <label for="update-sku">Barang</label>
+            <select id="update-sku" required></select>
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="update-action">Aksi</label>
+              <select id="update-action">
+                <option value="SUBTRACT">Kurangi (SUBTRACT)</option>
+                <option value="ADD">Tambah (ADD)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="update-qty">Jumlah</label>
+              <input id="update-qty" type="number" min="1" step="1" value="1" required />
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="update-note">Catatan (opsional)</label>
+            <input id="update-note" type="text" maxlength="255" placeholder="mis. penjualan harian" />
+          </div>
+
+          <p class="hint" id="unit-hint"></p>
+          <button type="submit" id="update-btn">Kirim Transaksi</button>
+          <p id="update-error" class="error" role="alert" hidden></p>
+        </form>
+      </section>
+
+      <!-- Riwayat -->
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Riwayat Transaksi</h2>
+          <span class="muted" id="logs-count"></span>
+        </div>
+
+        <form id="logs-filter" class="logs-filter">
+          <select id="filter-branch" hidden>
+            <option value="">Semua cabang</option>
+          </select>
+          <select id="filter-sku">
+            <option value="">Semua SKU</option>
+          </select>
+          <select id="filter-status">
+            <option value="">Semua status</option>
+            <option value="SUCCESS">SUCCESS</option>
+            <option value="REJECTED">REJECTED</option>
+          </select>
+          <select id="filter-limit">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+          </select>
+        </form>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Waktu</th>
+                <th>Cabang</th>
+                <th>SKU</th>
+                <th>+/-</th>
+                <th>Stok</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="logs-body">
+              <tr><td colspan="6" class="muted center">Memuat riwayat&hellip;</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <footer class="footer muted">
+      <span>Nuansa Wangi Inventory &middot; API key per cabang</span>
+      <span id="rate-info"></span>
+    </footer>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>

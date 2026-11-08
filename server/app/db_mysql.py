@@ -22,6 +22,7 @@ import functools
 import logging
 import os
 from contextlib import contextmanager
+from datetime import datetime, timezone
 
 import pymysql
 from dbutils.pooled_db import PooledDB
@@ -204,6 +205,169 @@ def list_logs(branch_id=None, sku=None, status=None, limit: int = 50) -> list[di
             rows = cur.fetchall()
         conn.rollback()
         return rows
+
+
+# ----------------------------------------------------------------------
+# Auth per cabang
+# ----------------------------------------------------------------------
+@_guard
+def branch_by_api_key(key_hash: str) -> str | None:
+    """Cari cabang berdasarkan SHA-256 API key. None = kunci tidak valid/nonaktif."""
+    with _connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM branches WHERE api_key_hash = %s", (key_hash,))
+            row = cur.fetchone()
+        conn.rollback()
+    return row["id"] if row else None
+
+
+@_guard
+def list_branches() -> list[dict]:
+    with _connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, (api_key_hash IS NOT NULL) AS has_key "
+                "FROM branches ORDER BY id"
+            )
+            rows = cur.fetchall()
+        conn.rollback()
+    return [{"id": r["id"], "name": r["name"], "has_key": bool(r["has_key"])} for r in rows]
+
+
+@_guard
+def set_branch_api_key(branch_id: str, key_hash: str | None) -> bool:
+    """Set/rotate/hapus API key cabang. key_hash=None berarti cabang dinonaktifkan."""
+    with _connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM branches WHERE id = %s", (branch_id,))
+            if cur.fetchone() is None:
+                raise BranchNotFound(branch_id)
+            cur.execute(
+                "UPDATE branches SET api_key_hash = %s WHERE id = %s", (key_hash, branch_id)
+            )
+        conn.commit()
+    return True
+
+
+# ----------------------------------------------------------------------
+# Ringkasan untuk dashboard / monitoring
+# ----------------------------------------------------------------------
+@_guard
+def summary() -> dict:
+    with _connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS item_count, COALESCE(SUM(qty), 0) AS total_qty "
+                "FROM inventory_items"
+            )
+            items = cur.fetchone()
+            cur.execute(
+                "SELECT status, COUNT(*) AS n FROM stock_transactions GROUP BY status"
+            )
+            rows = cur.fetchall()
+            cur.execute("SELECT MAX(created_at) AS last_tx FROM stock_transactions")
+            last = cur.fetchone()["last_tx"]
+        conn.rollback()
+    counts = {r["status"]: r["n"] for r in rows}
+    return {
+        "item_count": int(items["item_count"]),
+        "total_qty": int(items["total_qty"]),
+        "success": int(counts.get("SUCCESS", 0)),
+        "rejected": int(counts.get("REJECTED", 0)),
+        "last_tx": last,
+    }
+
+
+# ----------------------------------------------------------------------
+# Backup / restore logis (portabel antar backend)
+# ----------------------------------------------------------------------
+@_guard
+def export_snapshot() -> dict:
+    """Ambil seluruh isi database sebagai dict siap disimpan ke JSON."""
+    with _connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name, api_key_hash FROM branches ORDER BY id")
+            branches = cur.fetchall()
+            cur.execute(
+                "SELECT sku, name, category, unit, qty, updated_at "
+                "FROM inventory_items ORDER BY sku"
+            )
+            items = cur.fetchall()
+            cur.execute(
+                "SELECT id, request_id, branch_id, sku, action, delta, qty_before, "
+                "qty_after, status, note, created_at "
+                "FROM stock_transactions ORDER BY id"
+            )
+            tx = cur.fetchall()
+        conn.rollback()
+    return {
+        "backend": BACKEND,
+        "exported_at": datetime.now(timezone.utc),
+        "branches": branches,
+        "inventory_items": items,
+        "stock_transactions": tx,
+    }
+
+
+@_guard
+def import_snapshot(snapshot: dict) -> dict:
+    """Ganti seluruh isi database dengan snapshot. Dipakai scripts/restore.py."""
+    branches = snapshot.get("branches", [])
+    items = snapshot.get("inventory_items", [])
+    tx = snapshot.get("stock_transactions", [])
+
+    conn = _get_pool().connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM stock_transactions")
+            cur.execute("DELETE FROM inventory_items")
+            cur.execute("DELETE FROM branches")
+
+            if branches:
+                cur.executemany(
+                    "INSERT INTO branches (id, name, api_key_hash) VALUES (%s, %s, %s)",
+                    [(b["id"], b["name"], b.get("api_key_hash")) for b in branches],
+                )
+            if items:
+                cur.executemany(
+                    "INSERT INTO inventory_items (sku, name, category, unit, qty, updated_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    [(i["sku"], i["name"], i["category"], i["unit"], int(i["qty"]),
+                      i.get("updated_at")) for i in items],
+                )
+            if tx:
+                cur.executemany(
+                    "INSERT INTO stock_transactions "
+                    "(id, request_id, branch_id, sku, action, delta, qty_before, "
+                    " qty_after, status, note, created_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    [(int(t["id"]), t["request_id"], t["branch_id"], t["sku"],
+                      t["action"], int(t["delta"]), int(t["qty_before"]),
+                      int(t["qty_after"]), t["status"], t.get("note"),
+                      t.get("created_at")) for t in tx],
+                )
+        conn.commit()
+
+        # Selaraskan AUTO_INCREMENT dengan id terbesar (jaga-jaga setelah restore).
+        with conn.cursor() as cur:
+            cur.execute("SELECT COALESCE(MAX(id), 0) AS m FROM stock_transactions")
+            max_id = cur.fetchone()["m"]
+            if max_id:
+                cur.execute(
+                    f"ALTER TABLE stock_transactions AUTO_INCREMENT = {int(max_id) + 1}"
+                )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return {
+        "branches": len(branches),
+        "inventory_items": len(items),
+        "stock_transactions": len(tx),
+    }
 
 
 # ----------------------------------------------------------------------

@@ -16,6 +16,7 @@ main.py tidak bergantung pada psycopg.
 import functools
 import logging
 import os
+from datetime import datetime, timezone
 
 import psycopg
 import psycopg_pool
@@ -150,6 +151,148 @@ def list_logs(branch_id=None, sku=None, status=None, limit: int = 50) -> list[di
     """
     with pool.connection() as conn:
         return conn.execute(sql, params).fetchall()
+
+
+# ----------------------------------------------------------------------
+# Auth per cabang
+# ----------------------------------------------------------------------
+@_guard
+def branch_by_api_key(key_hash: str) -> str | None:
+    """Cari cabang berdasarkan SHA-256 API key. None = kunci tidak valid/nonaktif."""
+    with pool.connection() as conn:
+        row = conn.execute(
+            "SELECT id FROM branches WHERE api_key_hash = %s", (key_hash,)
+        ).fetchone()
+    return row["id"] if row else None
+
+
+@_guard
+def list_branches() -> list[dict]:
+    with pool.connection() as conn:
+        rows = conn.execute(
+            "SELECT id, name, (api_key_hash IS NOT NULL) AS has_key "
+            "FROM branches ORDER BY id"
+        ).fetchall()
+    return [{"id": r["id"], "name": r["name"], "has_key": bool(r["has_key"])} for r in rows]
+
+
+@_guard
+def set_branch_api_key(branch_id: str, key_hash: str | None) -> bool:
+    """Set/rotate/hapus API key cabang. key_hash=None berarti cabang dinonaktifkan."""
+    with pool.connection() as conn:
+        exists = conn.execute("SELECT 1 FROM branches WHERE id = %s", (branch_id,)).fetchone()
+        if exists is None:
+            raise BranchNotFound(branch_id)
+        conn.execute(
+            "UPDATE branches SET api_key_hash = %s WHERE id = %s", (key_hash, branch_id)
+        )
+    return True
+
+
+# ----------------------------------------------------------------------
+# Ringkasan untuk dashboard / monitoring
+# ----------------------------------------------------------------------
+@_guard
+def summary() -> dict:
+    with pool.connection() as conn:
+        items = conn.execute(
+            "SELECT COUNT(*) AS item_count, COALESCE(SUM(qty), 0) AS total_qty FROM inventory_items"
+        ).fetchone()
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS n FROM stock_transactions GROUP BY status"
+        ).fetchall()
+        last = conn.execute(
+            "SELECT MAX(created_at) AS last_tx FROM stock_transactions"
+        ).fetchone()["last_tx"]
+    counts = {r["status"]: r["n"] for r in rows}
+    return {
+        "item_count": int(items["item_count"]),
+        "total_qty": int(items["total_qty"]),
+        "success": int(counts.get("SUCCESS", 0)),
+        "rejected": int(counts.get("REJECTED", 0)),
+        "last_tx": last,
+    }
+
+
+# ----------------------------------------------------------------------
+# Backup / restore logis (portabel antar backend)
+# ----------------------------------------------------------------------
+@_guard
+def export_snapshot() -> dict:
+    """Ambil seluruh isi database sebagai dict siap disimpan ke JSON."""
+    with pool.connection() as conn:
+        branches = conn.execute(
+            "SELECT id, name, api_key_hash FROM branches ORDER BY id"
+        ).fetchall()
+        items = conn.execute(
+            "SELECT sku, name, category, unit, qty, updated_at "
+            "FROM inventory_items ORDER BY sku"
+        ).fetchall()
+        tx = conn.execute(
+            "SELECT id, request_id, branch_id, sku, action, delta, qty_before, "
+            "qty_after, status, note, created_at "
+            "FROM stock_transactions ORDER BY id"
+        ).fetchall()
+    return {
+        "backend": BACKEND,
+        "exported_at": datetime.now(timezone.utc),
+        "branches": branches,
+        "inventory_items": items,
+        "stock_transactions": tx,
+    }
+
+
+@_guard
+def import_snapshot(snapshot: dict) -> dict:
+    """Ganti seluruh isi database dengan snapshot. Dipakai scripts/restore.py."""
+    branches = snapshot.get("branches", [])
+    items = snapshot.get("inventory_items", [])
+    tx = snapshot.get("stock_transactions", [])
+
+    with pool.connection() as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM stock_transactions")
+                cur.execute("DELETE FROM inventory_items")
+                cur.execute("DELETE FROM branches")
+
+                if branches:
+                    cur.executemany(
+                        "INSERT INTO branches (id, name, api_key_hash) VALUES (%s, %s, %s)",
+                        [(b["id"], b["name"], b.get("api_key_hash")) for b in branches],
+                    )
+                if items:
+                    cur.executemany(
+                        "INSERT INTO inventory_items (sku, name, category, unit, qty, updated_at) "
+                        "VALUES (%s, %s, %s, %s, %s, %s)",
+                        [(i["sku"], i["name"], i["category"], i["unit"], int(i["qty"]),
+                          i.get("updated_at")) for i in items],
+                    )
+                if tx:
+                    cur.executemany(
+                        "INSERT INTO stock_transactions "
+                        "(id, request_id, branch_id, sku, action, delta, qty_before, "
+                        " qty_after, status, note, created_at) "
+                        "OVERRIDING SYSTEM VALUE "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        [(int(t["id"]), t["request_id"], t["branch_id"], t["sku"],
+                          t["action"], int(t["delta"]), int(t["qty_before"]),
+                          int(t["qty_after"]), t["status"], t.get("note"),
+                          t.get("created_at")) for t in tx],
+                    )
+
+                # Samakan sequence identity dengan id terbesar yang baru dimasukkan.
+                cur.execute(
+                    "SELECT setval(pg_get_serial_sequence('stock_transactions', 'id'), "
+                    "COALESCE((SELECT MAX(id) FROM stock_transactions), 1), "
+                    "(SELECT COUNT(*) > 0 FROM stock_transactions))"
+                )
+
+    return {
+        "branches": len(branches),
+        "inventory_items": len(items),
+        "stock_transactions": len(tx),
+    }
 
 
 # ----------------------------------------------------------------------

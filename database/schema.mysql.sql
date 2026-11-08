@@ -20,11 +20,40 @@ CREATE DATABASE IF NOT EXISTS nuansa_wangi
 USE nuansa_wangi;
 
 -- 1) Master cabang -----------------------------------------------------
+--  api_key_hash = SHA-256 (hex) dari API key cabang. Kunci mentah tidak
+--  disimpan di database. NULL = cabang dinonaktifkan (tidak bisa transaksi).
 CREATE TABLE IF NOT EXISTS branches (
-    id    VARCHAR(50)  NOT NULL,
-    name  VARCHAR(100) NOT NULL,
-    PRIMARY KEY (id)
+    id            VARCHAR(50)  NOT NULL,
+    name          VARCHAR(100) NOT NULL,
+    api_key_hash  CHAR(64)     NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_branch_api_key (api_key_hash)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+--  Migrasi untuk database yang dibuat sebelum fitur API key ada.
+--  MySQL 8.0 tidak mendukung ADD COLUMN IF NOT EXISTS, jadi dicek lewat
+--  information_schema lalu dijalankan sebagai prepared statement.
+SET @has_api_key_hash := (
+    SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'branches'
+      AND column_name = 'api_key_hash'
+);
+SET @ddl := IF(@has_api_key_hash = 0,
+    'ALTER TABLE branches ADD COLUMN api_key_hash CHAR(64) NULL',
+    'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @has_key_index := (
+    SELECT COUNT(*) FROM information_schema.statistics
+    WHERE table_schema = DATABASE()
+      AND table_name = 'branches'
+      AND index_name = 'uq_branch_api_key'
+);
+SET @ddl := IF(@has_key_index = 0,
+    'CREATE UNIQUE INDEX uq_branch_api_key ON branches (api_key_hash)',
+    'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 2) Stok terpusat -----------------------------------------------------
 --  PostgreSQL: TIMESTAMPTZ + now(). MySQL: TIMESTAMP(6) + CURRENT_TIMESTAMP(6).
@@ -106,9 +135,28 @@ INSERT IGNORE INTO inventory_items (sku, name, category, unit, qty) VALUES
     ('BOTOL-KACA-30',  'Botol Kaca 30ml',       'BOTOL', 'pcs',  50),
     ('BOTOL-KACA-50',  'Botol Kaca 50ml',       'BOTOL', 'pcs',  80);
 
+-- 6) API key per cabang ------------------------------------------------
+--  Kunci DEMO di bawah hanya untuk latihan/penilaian. Ganti sebelum dipakai
+--  sungguhan dengan:  python scripts/manage_keys.py rotate --branch branch-a
+--
+--  branch-a : nw-demo-branch-a-7f3a9c1e
+--  branch-b : nw-demo-branch-b-2b8d4f6a
+--  branch-c : nw-demo-branch-c-9c5e7a1d
+--
+--  `AND api_key_hash IS NULL` membuat rotasi kunci tidak tertimpa saat
+--  file schema dijalankan ulang.
+UPDATE branches SET api_key_hash = '8e3fa6c1a9d1a7b36eacb26d62766b4eefc94ec20bc4f2535a0a3caa0d3292e9'
+    WHERE id = 'branch-a' AND api_key_hash IS NULL;
+UPDATE branches SET api_key_hash = 'e7930c4870255c3f02d2428243c045ae980bd001d5e265950acf8a61f9e8fa9e'
+    WHERE id = 'branch-b' AND api_key_hash IS NULL;
+UPDATE branches SET api_key_hash = 'a3bca45c4c6159ae7bb13c2542990fdcc3251ba1b955026d48397c656c0aad2b'
+    WHERE id = 'branch-c' AND api_key_hash IS NULL;
+
 -- Verifikasi cepat
 SELECT 'branches' AS tabel, COUNT(*) AS jumlah FROM branches
 UNION ALL
 SELECT 'inventory_items', COUNT(*) FROM inventory_items
 UNION ALL
-SELECT 'stock_transactions', COUNT(*) FROM stock_transactions;
+SELECT 'stock_transactions', COUNT(*) FROM stock_transactions
+UNION ALL
+SELECT 'branches_with_key', COUNT(*) FROM branches WHERE api_key_hash IS NOT NULL;

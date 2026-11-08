@@ -3,7 +3,8 @@
 Node Cabang (Client) - Nuansa Wangi.
 
 Setiap container cabang menjalankan client ini. Identitas cabang diambil dari
-environment variable BRANCH_ID, alamat server dari API_URL.
+environment variable BRANCH_ID, alamat server dari API_URL, dan API key cabang
+dari BRANCH_API_KEY.
 
 Contoh (dari dalam container cabang):
     python branch_client.py ping
@@ -11,6 +12,10 @@ Contoh (dari dalam container cabang):
     python branch_client.py update --sku BIBIT-BACCARAT --action SUBTRACT --qty 10
     python branch_client.py logs --limit 10
     python branch_client.py logs --mine
+
+Semua endpoint selain /health wajib menyertakan header X-API-Key. Server
+menolak (401) kalau kunci tidak ada/tidak dikenal, dan menolak (403) kalau
+kunci cabang dipakai untuk cabang lain.
 """
 import argparse
 import json
@@ -24,8 +29,21 @@ import requests
 API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
 BRANCH_ID = os.getenv("BRANCH_ID", "branch-a")
 BRANCH_NAME = os.getenv("BRANCH_NAME", BRANCH_ID)
+BRANCH_API_KEY = os.getenv("BRANCH_API_KEY", "").strip()
 TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "15"))
 MAX_RETRY = int(os.getenv("MAX_RETRY", "3"))
+
+
+def auth_headers() -> dict:
+    """Header autentikasi. Kalau BRANCH_API_KEY kosong, server akan menjawab 401."""
+    if not BRANCH_API_KEY:
+        print(
+            f"[{BRANCH_NAME}] PERINGATAN: BRANCH_API_KEY belum diisi; "
+            "server akan menolak dengan HTTP 401.",
+            file=sys.stderr,
+        )
+        return {}
+    return {"X-API-Key": BRANCH_API_KEY}
 
 
 def show(data) -> None:
@@ -55,7 +73,7 @@ def cmd_ping(_args) -> int:
 
 
 def cmd_items(_args) -> int:
-    r = request_with_retry("GET", "/items")
+    r = request_with_retry("GET", "/items", headers=auth_headers())
     show(r.json())
     return 0 if r.ok else 1
 
@@ -70,7 +88,7 @@ def cmd_update(args) -> int:
     }
     if args.note:
         body["note"] = args.note
-    r = request_with_retry("POST", "/items/update", json=body)
+    r = request_with_retry("POST", "/items/update", json=body, headers=auth_headers())
     print(f"[{BRANCH_NAME}] HTTP {r.status_code}")
     show(r.json())
     return 0 if r.ok else 1
@@ -82,7 +100,7 @@ def cmd_logs(args) -> int:
         params["branch_id"] = BRANCH_ID
     if args.sku:
         params["sku"] = args.sku
-    r = request_with_retry("GET", "/logs", params=params)
+    r = request_with_retry("GET", "/logs", params=params, headers=auth_headers())
     show(r.json())
     return 0 if r.ok else 1
 

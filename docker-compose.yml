@@ -22,6 +22,13 @@ services:
     build: ./server
     container_name: nw-api
     env_file: .env                # berisi DATABASE_URL Supabase
+    environment:
+      # Nilai default ini hanya untuk demo/latihan. Ganti lewat .env sebelum
+      # dipakai sungguhan (lihat scripts/manage_keys.py).
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-nw-demo-admin-4d2f8b6c}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-600}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-120}
     ports:
       - "8000:8000"               # supaya bisa diakses dari host (Postman / browser / test dari host)
     networks:
@@ -43,6 +50,7 @@ services:
       BRANCH_ID: branch-a
       BRANCH_NAME: Cabang Empang
       API_URL: http://api:8000
+      BRANCH_API_KEY: ${BRANCH_A_API_KEY:-nw-demo-branch-a-7f3a9c1e}
     networks:
       jmk48-net:
         ipv4_address: 172.28.0.11
@@ -55,6 +63,7 @@ services:
       BRANCH_ID: branch-b
       BRANCH_NAME: Cabang Cilendek
       API_URL: http://api:8000
+      BRANCH_API_KEY: ${BRANCH_B_API_KEY:-nw-demo-branch-b-2b8d4f6a}
     networks:
       jmk48-net:
         ipv4_address: 172.28.0.12
@@ -67,6 +76,7 @@ services:
       BRANCH_ID: branch-c
       BRANCH_NAME: Cabang Cibinong
       API_URL: http://api:8000
+      BRANCH_API_KEY: ${BRANCH_C_API_KEY:-nw-demo-branch-c-9c5e7a1d}
     networks:
       jmk48-net:
         ipv4_address: 172.28.0.13

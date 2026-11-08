@@ -67,3 +67,29 @@ INSERT INTO inventory_items (sku, name, category, unit, qty) VALUES
     ('BOTOL-KACA-30',  'Botol Kaca 30ml',       'BOTOL', 'pcs',  50),
     ('BOTOL-KACA-50',  'Botol Kaca 50ml',       'BOTOL', 'pcs',  80)
 ON CONFLICT (sku) DO NOTHING;
+
+-- 6) API key per cabang ------------------------------------------------
+--  Kolom ini menyimpan SHA-256 (hex) dari API key. Kunci mentah TIDAK
+--  disimpan di database, jadi kalau database bocor tidak langsung terpakai.
+--
+--  Migrasi aman untuk database lama: kolom & index hanya ditambah sekali.
+ALTER TABLE branches ADD COLUMN IF NOT EXISTS api_key_hash TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_branch_api_key
+    ON branches (api_key_hash) WHERE api_key_hash IS NOT NULL;
+
+--  Kunci DEMO di bawah hanya untuk latihan/penilaian. Ganti sebelum dipakai
+--  sungguhan dengan:  python scripts/manage_keys.py rotate --branch branch-a
+--
+--  branch-a : nw-demo-branch-a-7f3a9c1e
+--  branch-b : nw-demo-branch-b-2b8d4f6a
+--  branch-c : nw-demo-branch-c-9c5e7a1d
+--
+--  `AND api_key_hash IS NULL` membuat rotasi kunci tidak tertimpa saat
+--  file schema dijalankan ulang.
+UPDATE branches SET api_key_hash = '8e3fa6c1a9d1a7b36eacb26d62766b4eefc94ec20bc4f2535a0a3caa0d3292e9'
+    WHERE id = 'branch-a' AND api_key_hash IS NULL;
+UPDATE branches SET api_key_hash = 'e7930c4870255c3f02d2428243c045ae980bd001d5e265950acf8a61f9e8fa9e'
+    WHERE id = 'branch-b' AND api_key_hash IS NULL;
+UPDATE branches SET api_key_hash = 'a3bca45c4c6159ae7bb13c2542990fdcc3251ba1b955026d48397c656c0aad2b'
+    WHERE id = 'branch-c' AND api_key_hash IS NULL;

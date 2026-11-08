@@ -8,11 +8,18 @@ Skenario:
      -> uji Race Condition / Zero Negative Stock / konsistensi data.
   3. Penanganan ERROR: request tidak valid, resource tidak ada, stok kurang,
      koneksi gagal + retry idempoten.
+  4. Keamanan: API key per cabang wajib, kunci cabang tidak bisa dipakai
+     untuk cabang lain, dan endpoint admin hanya untuk kunci admin.
 
 Cara pakai:
   python test_scenarios.py            # semua skenario
   python test_scenarios.py 2          # hanya skenario 2
   API_URL=http://localhost:8000 python test_scenarios.py
+
+Kunci API diambil dari environment variable, dengan default kunci DEMO yang
+sama seperti di database/schema.sql:
+  BRANCH_A_API_KEY, BRANCH_B_API_KEY, BRANCH_C_API_KEY, ADMIN_API_KEY
+Ganti kunci demo sebelum dipakai sungguhan (scripts/manage_keys.py).
 
 Exit code 0 = semua lulus, 1 = ada yang gagal, 2 = server tidak bisa dihubungi.
 """
@@ -33,6 +40,13 @@ DEAD_URL = "http://127.0.0.1:9"  # port 9 hampir pasti tertutup -> simulasi serv
 CABANG_1 = "branch-a"  # Cabang Empang
 CABANG_2 = "branch-b"  # Cabang Cilendek
 CABANG_3 = "branch-c"  # Cabang Cibinong
+
+BRANCH_KEYS = {
+    CABANG_1: os.getenv("BRANCH_A_API_KEY", "nw-demo-branch-a-7f3a9c1e").strip(),
+    CABANG_2: os.getenv("BRANCH_B_API_KEY", "nw-demo-branch-b-2b8d4f6a").strip(),
+    CABANG_3: os.getenv("BRANCH_C_API_KEY", "nw-demo-branch-c-9c5e7a1d").strip(),
+}
+ADMIN_KEY = os.getenv("ADMIN_API_KEY", "nw-demo-admin-4d2f8b6c").strip()
 
 SKU_BIBIT = "BIBIT-BACCARAT"  # satuan ml
 SKU_BOTOL = "BOTOL-KACA-30"   # satuan pcs
@@ -95,18 +109,40 @@ def body_of(branch, sku, action, qty, request_id=None, note=None) -> dict:
     return body
 
 
-def post_update(body, base_url: str = None, timeout: float = None) -> requests.Response:
-    return requests.post(f"{base_url or API_URL}/items/update", json=body, timeout=timeout or TIMEOUT)
+def headers_for(branch: str) -> dict:
+    """Header API key milik cabang tertentu (dipakai juga untuk uji otorisasi)."""
+    key = BRANCH_KEYS.get(branch, "")
+    return {"X-API-Key": key} if key else {}
+
+
+def admin_headers() -> dict:
+    return {"X-API-Key": ADMIN_KEY} if ADMIN_KEY else {}
+
+
+def update_headers(body: dict) -> dict:
+    """Kunci mengikuti branch_id di body; cabang tak dikenal -> pakai kunci admin."""
+    return headers_for(body.get("branch_id", "")) or admin_headers()
+
+
+def post_update(body, base_url: str = None, timeout: float = None,
+                headers: dict = None) -> requests.Response:
+    return requests.post(
+        f"{base_url or API_URL}/items/update",
+        json=body,
+        headers=headers if headers is not None else update_headers(body),
+        timeout=timeout or TIMEOUT,
+    )
 
 
 def get_stock(sku: str) -> int:
-    r = requests.get(f"{API_URL}/items/{sku}", timeout=TIMEOUT)
+    r = requests.get(f"{API_URL}/items/{sku}", headers=headers_for(CABANG_1), timeout=TIMEOUT)
     r.raise_for_status()
     return r.json()["qty"]
 
 
 def get_logs(**params) -> list:
-    r = requests.get(f"{API_URL}/logs", params=params, timeout=TIMEOUT)
+    # Admin melihat semua cabang; dipakai untuk memeriksa riwayat lintas cabang.
+    r = requests.get(f"{API_URL}/logs", params=params, headers=admin_headers(), timeout=TIMEOUT)
     r.raise_for_status()
     return r.json()["logs"]
 
@@ -276,13 +312,14 @@ def scenario_3(rep: Report) -> None:
                   f"dapat HTTP {r.status_code} {r.text[:120]}")
 
     r = requests.post(f"{API_URL}/items/update", data="{ini bukan json", timeout=TIMEOUT,
-                      headers={"Content-Type": "application/json"})
+                      headers={**headers_for(CABANG_1), "Content-Type": "application/json"})
     rep.check(f"{'body JSON rusak':<40} -> HTTP 422", r.status_code == 422, f"dapat HTTP {r.status_code}")
 
-    r = requests.get(f"{API_URL}/items/TIDAK-ADA", timeout=TIMEOUT)
+    r = requests.get(f"{API_URL}/items/TIDAK-ADA", headers=headers_for(CABANG_1), timeout=TIMEOUT)
     rep.check(f"{'GET /items/<sku tidak ada>':<40} -> HTTP 404", r.status_code == 404, f"dapat HTTP {r.status_code}")
 
-    r = requests.get(f"{API_URL}/logs", params={"limit": 0}, timeout=TIMEOUT)
+    r = requests.get(f"{API_URL}/logs", params={"limit": 0},
+                     headers=headers_for(CABANG_1), timeout=TIMEOUT)
     rep.check(f"{'GET /logs?limit=0':<40} -> HTTP 422", r.status_code == 422, f"dapat HTTP {r.status_code}")
 
     after = get_stock(SKU_BIBIT)
@@ -322,8 +359,118 @@ def scenario_3(rep: Report) -> None:
     rep.check("request_id sama tapi isi berbeda -> 409 REQUEST_ID_MISMATCH",
               r3.status_code == 409 and error_code(r3) == "REQUEST_ID_MISMATCH", f"HTTP {r3.status_code} {r3.text[:120]}")
 
-    items = requests.get(f"{API_URL}/items", timeout=TIMEOUT).json()["items"]
+    items = requests.get(f"{API_URL}/items", headers=headers_for(CABANG_1), timeout=TIMEOUT).json()["items"]
     rep.check("Invarian akhir: semua stok >= 0", all(i["qty"] >= 0 for i in items))
+
+
+# ----------------------------------------------------------------------
+# Skenario 4 - keamanan API key
+# ----------------------------------------------------------------------
+def scenario_4(rep: Report) -> None:
+    header("SKENARIO 4 - Keamanan: API key per cabang & hak admin")
+
+    print("\n -- 4A. Kunci wajib untuk endpoint data --")
+    r = requests.get(f"{API_URL}/items", timeout=TIMEOUT)
+    rep.check("Tanpa X-API-Key                          -> HTTP 401 API_KEY_REQUIRED",
+              r.status_code == 401 and error_code(r) == "API_KEY_REQUIRED",
+              f"dapat HTTP {r.status_code} {r.text[:120]}")
+
+    r = requests.get(f"{API_URL}/items", headers={"X-API-Key": "kunci-palsu-12345"},
+                     timeout=TIMEOUT)
+    rep.check("Kunci tidak dikenal                       -> HTTP 401 API_KEY_INVALID",
+              r.status_code == 401 and error_code(r) == "API_KEY_INVALID",
+              f"dapat HTTP {r.status_code} {r.text[:120]}")
+
+    r = requests.get(f"{API_URL}/items", headers=headers_for(CABANG_1), timeout=TIMEOUT)
+    rep.check("Kunci cabang valid                       -> HTTP 200",
+              r.status_code == 200, f"dapat HTTP {r.status_code}")
+
+    print("\n -- 4B. Kunci cabang hanya berlaku untuk cabangnya sendiri --")
+    before = get_stock(SKU_BIBIT)
+    rid = new_id("auth")
+    body = body_of(CABANG_2, SKU_BIBIT, "SUBTRACT", 1, rid, "[TEST] auth mismatch")
+    r = post_update(body, headers=headers_for(CABANG_1))
+    rep.check("branch-a mencoba update branch-b          -> HTTP 403 BRANCH_MISMATCH",
+              r.status_code == 403 and error_code(r) == "BRANCH_MISMATCH",
+              f"dapat HTTP {r.status_code} {r.text[:120]}")
+    rep.check("Stok tidak berubah karena request ditolak", get_stock(SKU_BIBIT) == before)
+
+    r = requests.get(f"{API_URL}/logs", params={"branch_id": CABANG_2},
+                     headers=headers_for(CABANG_1), timeout=TIMEOUT)
+    rep.check("branch-a minta log branch-b               -> HTTP 403 BRANCH_MISMATCH",
+              r.status_code == 403 and error_code(r) == "BRANCH_MISMATCH",
+              f"dapat HTTP {r.status_code} {r.text[:120]}")
+
+    # Pastikan ada log milik branch-a (netral: -1 lalu +1) walau skenario 4 dijalankan sendiri.
+    for action in ("SUBTRACT", "ADD"):
+        requests.post(
+            f"{API_URL}/items/update",
+            json=body_of(CABANG_1, SKU_BIBIT, action, 1, new_id("authlog"), "[TEST] auth log"),
+            headers=headers_for(CABANG_1), timeout=TIMEOUT,
+        )
+    r = requests.get(f"{API_URL}/logs", params={"limit": 100},
+                     headers=headers_for(CABANG_1), timeout=TIMEOUT)
+    logs = r.json().get("logs", []) if r.ok else []
+    rep.check("branch-a /logs tanpa filter otomatis dibatasi ke branch-a",
+              r.status_code == 200 and bool(logs)
+              and all(l["branch_id"] == CABANG_1 for l in logs),
+              f"HTTP {r.status_code}, cabang={sorted({l.get('branch_id') for l in logs})}")
+
+    # Pastikan ada log branch-b untuk uji filter admin.
+    for action in ("SUBTRACT", "ADD"):
+        requests.post(
+            f"{API_URL}/items/update",
+            json=body_of(CABANG_2, SKU_BIBIT, action, 1, new_id("authlog"), "[TEST] auth log"),
+            headers=headers_for(CABANG_2), timeout=TIMEOUT,
+        )
+
+    print("\n -- 4C. Endpoint admin hanya untuk kunci admin --")
+    r = requests.get(f"{API_URL}/branches", headers=headers_for(CABANG_1), timeout=TIMEOUT)
+    rep.check("branch-a GET /branches                   -> HTTP 403 ADMIN_REQUIRED",
+              r.status_code == 403 and error_code(r) == "ADMIN_REQUIRED",
+              f"dapat HTTP {r.status_code} {r.text[:120]}")
+
+    r = requests.get(f"{API_URL}/summary", headers=headers_for(CABANG_1), timeout=TIMEOUT)
+    rep.check("branch-a GET /summary                    -> HTTP 403 ADMIN_REQUIRED",
+              r.status_code == 403 and error_code(r) == "ADMIN_REQUIRED",
+              f"dapat HTTP {r.status_code} {r.text[:120]}")
+
+    r = requests.get(f"{API_URL}/branches", headers=admin_headers(), timeout=TIMEOUT)
+    data = r.json() if r.ok else {}
+    rep.check("admin GET /branches                       -> HTTP 200 (>= 3 cabang)",
+              r.status_code == 200 and data.get("count", 0) >= 3,
+              f"HTTP {r.status_code} {r.text[:120]}")
+    rep.check("Respons /branches tidak membocorkan hash kunci",
+              all("api_key_hash" not in b for b in data.get("branches", [])))
+
+    r = requests.get(f"{API_URL}/summary", headers=admin_headers(), timeout=TIMEOUT)
+    summary = r.json() if r.ok else {}
+    rep.check("admin GET /summary                       -> HTTP 200 + field lengkap",
+              r.status_code == 200
+              and all(k in summary for k in ("item_count", "total_qty", "success", "rejected")),
+              f"HTTP {r.status_code} {r.text[:120]}")
+
+    r = requests.get(f"{API_URL}/logs", params={"branch_id": CABANG_2, "limit": 100},
+                     headers=admin_headers(), timeout=TIMEOUT)
+    logs = r.json().get("logs", []) if r.ok else []
+    rep.check("admin /logs?branch_id=branch-b hanya berisi branch-b",
+              r.status_code == 200 and bool(logs)
+              and all(l["branch_id"] == CABANG_2 for l in logs),
+              f"HTTP {r.status_code}, cabang={sorted({l.get('branch_id') for l in logs})}")
+
+    print("\n -- 4D. Identitas kunci (/auth/me) --")
+    r = requests.get(f"{API_URL}/auth/me", headers=headers_for(CABANG_1), timeout=TIMEOUT)
+    me = r.json() if r.ok else {}
+    rep.check("branch-a /auth/me -> branch_id=branch-a, is_admin=false",
+              r.status_code == 200 and me.get("branch_id") == CABANG_1
+              and me.get("is_admin") is False,
+              f"HTTP {r.status_code} {r.text[:120]}")
+
+    r = requests.get(f"{API_URL}/auth/me", headers=admin_headers(), timeout=TIMEOUT)
+    me = r.json() if r.ok else {}
+    rep.check("admin /auth/me -> is_admin=true",
+              r.status_code == 200 and me.get("is_admin") is True,
+              f"HTTP {r.status_code} {r.text[:120]}")
 
 
 # ----------------------------------------------------------------------
@@ -331,7 +478,7 @@ def scenario_3(rep: Report) -> None:
 # ----------------------------------------------------------------------
 def main() -> int:
     parser = argparse.ArgumentParser(description="Pengujian otomatis Inventaris Multi-Cabang Nuansa Wangi")
-    parser.add_argument("scenario", nargs="?", default="all", choices=["1", "2", "3", "all"])
+    parser.add_argument("scenario", nargs="?", default="all", choices=["1", "2", "3", "4", "all"])
     args = parser.parse_args()
 
     print(f"Target server: {API_URL}")
@@ -340,8 +487,8 @@ def main() -> int:
         return 2
 
     rep = Report()
-    runners = {"1": scenario_1, "2": scenario_2, "3": scenario_3}
-    selected = ["1", "2", "3"] if args.scenario == "all" else [args.scenario]
+    runners = {"1": scenario_1, "2": scenario_2, "3": scenario_3, "4": scenario_4}
+    selected = ["1", "2", "3", "4"] if args.scenario == "all" else [args.scenario]
     started = time.time()
     try:
         for key in selected:

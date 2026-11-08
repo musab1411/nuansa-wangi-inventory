@@ -60,3 +60,13 @@ list_items = _impl.list_items
 get_item = _impl.get_item
 list_logs = _impl.list_logs
 apply_stock_update = _impl.apply_stock_update
+
+# Auth per cabang
+branch_by_api_key = _impl.branch_by_api_key
+list_branches = _impl.list_branches
+set_branch_api_key = _impl.set_branch_api_key
+
+# Monitoring + backup/restore
+summary = _impl.summary
+export_snapshot = _impl.export_snapshot
+import_snapshot = _impl.import_snapshot
