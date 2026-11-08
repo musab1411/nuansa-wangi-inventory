@@ -35,6 +35,7 @@ Database bisa memakai salah satu backend (dipilih lewat `DB_BACKEND`):
 nuansa-wangi-inventory/
 ├── docker-compose.yml        # 1 server + 3 node cabang
 ├── .env.example              # salin jadi .env, pilih DB_BACKEND + kredensial + kunci API
+├── PANDUAN_UPDATE_DATABASE.md # panduan migrasi DB untuk mesin/copy lain
 ├── database/
 │   ├── schema.sql            # PostgreSQL: tabel + constraint + data awal + hash API key
 │   ├── reset_demo.sql        # PostgreSQL: reset stok & riwayat ke kondisi awal
@@ -129,6 +130,10 @@ docker compose down        # stop & hapus container (data tetap aman di Supabase
 ```
 
 ### Alternatif backend: MySQL 8.0 / Laragon (tanpa Supabase)
+
+> **Baru pindah / database MySQL sudah ada dari versi lama?** Ikuti panduan
+> langkah demi langkah di **[`PANDUAN_UPDATE_DATABASE.md`](PANDUAN_UPDATE_DATABASE.md)** —
+> berisi backup wajib, cara import, verifikasi, rollback, dan troubleshooting.
 
 Cocok untuk backup/development lokal di laptop lain, misalnya saat tidak ada internet.
 Semua fitur (row lock, idempotensi, audit log, 54 pengujian) tetap sama; hanya driver
