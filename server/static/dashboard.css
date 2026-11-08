@@ -24,6 +24,10 @@
 
 * { box-sizing: border-box; }
 
+/* Atribut hidden HARUS selalu menang atas display: grid/flex di bawah.
+   Tanpa ini, .login-view dan .summary-grid tetap tampil walau di-hidden. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
