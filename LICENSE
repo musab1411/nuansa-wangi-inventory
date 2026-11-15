@@ -1,0 +1,27 @@
+Lisensi Internal Kelompok 8
+Sistem Inventaris Multi-Cabang Nuansa Wangi (Client-Server)
+Copyright (c) 2026 Kelompok 8 - Program Studi Informatika, STIKOM El Rahma Bogor
+
+Karya ini disusun untuk memenuhi tugas mata kuliah Sistem Terdistribusi dan
+tidak dimaksudkan sebagai produk komersial. Hak cipta tetap melekat pada
+penyusun.
+
+DIIZINKAN:
+1. Menyalin, menjalankan, dan mempelajari kode ini untuk keperluan penilaian
+   akademik, demonstrasi kelas, dan pembelajaran.
+2. Mengutip sebagian kode atau dokumen dengan mencantumkan sumber secara jelas
+   (nama kelompok, mata kuliah, dan tautan repositori).
+
+TIDAK DIIZINKAN:
+1. Menggunakan seluruh atau sebagian karya ini untuk kepentingan komersial
+   tanpa izin tertulis dari penyusun.
+2. Mengakui karya ini sebagai karya sendiri atau menghapus atribusi penyusun.
+3. Mendistribusikan ulang data sensitif yang tidak disertakan pada repositori
+   ini, termasuk berkas .env, kunci API produksi, dan sertifikat TLS.
+
+TANPA JAMINAN:
+Perangkat lunak ini disediakan apa adanya, tanpa jaminan tersurat maupun
+tersirat, termasuk kelayakan untuk tujuan tertentu. Penyusun tidak bertanggung
+jawab atas kerugian yang timbul dari penggunaan perangkat lunak ini.
+
+Kontak: awwalmusab@gmail.com

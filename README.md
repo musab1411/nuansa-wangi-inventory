@@ -1,5 +1,13 @@
 # Sistem Inventaris Multi-Cabang Nuansa Wangi (Client-Server)
 
+[![Versi](https://img.shields.io/badge/versi-1.1.0-blue)](CHANGELOG.md)
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-Uvicorn-009688?logo=fastapi&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-8.0-4479A1?logo=mysql&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Supabase-4169E1?logo=postgresql&logoColor=white)
+![Pengujian](https://img.shields.io/badge/pengujian-54%20lulus-brightgreen)
+![Lisensi](https://img.shields.io/badge/lisensi-internal%20kelompok-lightgrey)
+
 Project Sistem Terdistribusi: stok **Bibit Parfum (ml)** dan **Botol Parfum (pcs)** untuk 3 cabang
 (Empang, Cilendek, Cibinong) disimpan di **satu database terpusat** dan diakses lewat
 **satu API Server (FastAPI)**. Konkurensi ditangani dengan **Pessimistic Locking** (`SELECT ... FOR UPDATE`).
@@ -13,6 +21,15 @@ Database bisa memakai salah satu backend (dipilih lewat `DB_BACKEND`):
 |---|---|---|
 | `postgres` (default) | Supabase / PostgreSQL | setup utama |
 | `mysql` | MySQL 8.0+ (Laragon / XAMPP) | backup / development lokal tanpa internet |
+
+### Tampilan
+
+| Dashboard operator cabang | Dashboard admin |
+|---|---|
+| ![Dashboard operator Cabang Empang](docs/dashboard-operator.png) | ![Dashboard admin semua cabang](docs/dashboard-admin.png) |
+
+Keduanya memakai API dan basis data yang sama; tampilan admin menambahkan kartu
+ringkasan agregat dan pilihan cabang.
 
 ## 1. Arsitektur
 
@@ -36,6 +53,9 @@ nuansa-wangi-inventory/
 ├── docker-compose.yml        # 1 server + 3 node cabang
 ├── .env.example              # salin jadi .env, pilih DB_BACKEND + kredensial + kunci API
 ├── PANDUAN_UPDATE_DATABASE.md # panduan migrasi DB untuk mesin/copy lain
+├── CHANGELOG.md              # riwayat versi
+├── LICENSE                   # lisensi internal kelompok
+├── docs/                     # tangkapan layar dashboard untuk README
 ├── database/
 │   ├── schema.sql            # PostgreSQL: tabel + constraint + data awal + hash API key
 │   ├── reset_demo.sql        # PostgreSQL: reset stok & riwayat ke kondisi awal
