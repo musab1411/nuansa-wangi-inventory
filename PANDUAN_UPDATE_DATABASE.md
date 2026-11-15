@@ -9,11 +9,39 @@ Kalau database-nya **baru dari nol**, dia tetap ikut panduan ini — hasilnya sa
 > plus satu unique index. Data stok dan riwayat transaksi **tidak dihapus**.
 > Script migrasinya aman dijalankan berulang.
 
+> ### ⚠️ Ini panduan MySQL / Laragon — bukan Supabase
+>
+> Seluruh langkah 1–7, 9–12 memakai **MySQL 8.0 di Laragon** (phpMyAdmin, HeidiSQL,
+> `mysqldump`, `schema.mysql.sql`). Supabase/PostgreSQL **tidak dipakai sama sekali**
+> di alur utama. Bagian PostgreSQL hanya ada di **Lampiran di paling bawah** dan
+> **boleh dilewati**.
+>
+> **Kalau temanmu merasa aplikasinya "jalan di Supabase", itu bukan dari panduan ini.**
+> Penyebabnya hampir selalu file `.env`: kalau di dalamnya ada `DATABASE_URL` dan
+> `DB_BACKEND` tidak diisi, aplikasi otomatis memilih PostgreSQL (lihat 0.1).
+
+**Daftar isi:**
+
+0. [Ringkasan 1 menit](#0-ringkasan-dalam-1-menit) · [0.1 Aplikasi masih nyambung Supabase?](#01-kalau-aplikasi-masih-nyambung-ke-supabase)
+1. [Prasyarat](#1-prasyarat)
+2. [Backup dulu](#2-wajib-backup-dulu)
+3. [Jalankan migrasi](#3-jalankan-migrasi-databaseschemamysqlsql)
+4. [Apa yang dilakukan script](#4-apa-yang-sebenarnya-dilakukan-script-itu)
+5. [Verifikasi](#5-verifikasi-setelah-migrasi)
+6. [Konfigurasi aplikasi](#6-setelah-migrasi-konfigurasi-aplikasi)
+7. [Ganti kunci demo](#7-disarankan-ganti-kunci-demo)
+8. [Lampiran PostgreSQL (opsional)](#8-lampiran-opsional--kalau-database-nya-postgresql--supabase)
+9. [Troubleshooting](#9-troubleshooting)
+10. [Rollback](#10-rollback-kalau-benar-benar-perlu)
+11. [Checklist akhir](#11-checklist-akhir)
+12. [FAQ](#12-faq-singkat)
+
 ---
 
 ## 0. Ringkasan dalam 1 menit
 
 ```text
+0. Buang .env dari komputer lain -> DB_BACKEND=mysql (lihat 0.1)
 1. Cek MySQL 8.0+            -> SELECT VERSION();
 2. BACKUP dulu               -> mysqldump / export phpMyAdmin
 3. Jalankan schema.mysql.sql -> phpMyAdmin Import / mysql CLI
@@ -21,6 +49,57 @@ Kalau database-nya **baru dari nol**, dia tetap ikut panduan ini — hasilnya sa
 5. Set .env                  -> DB_BACKEND=mysql + ADMIN_API_KEY
 6. Jalankan server + tes     -> target 54/54 lulus
 ```
+
+---
+
+## 0.1 Kalau aplikasi masih nyambung ke Supabase
+
+Kalau `http://localhost:8000/health` menjawab `"backend":"postgres"` padahal
+kamu sudah menyiapkan MySQL, hampir pasti karena **`.env` bawaan komputer lain**
+ikut terbawa (misalnya dari file ZIP). Di dalamnya ada `DATABASE_URL`, dan
+aplikasi memilih backend dengan aturan ini (`server/app/db.py`):
+
+```python
+DB_BACKEND = os.getenv("DB_BACKEND", "").strip().lower()
+if not DB_BACKEND:
+    DB_BACKEND = "postgres" if os.getenv("DATABASE_URL") else "mysql"
+```
+
+Artinya: **`DB_BACKEND` kosong + ada `DATABASE_URL` = PostgreSQL/Supabase.**
+Migrasi MySQL yang sudah dijalankan jadi tidak terpakai, karena aplikasi membaca
+database lain.
+
+### Cara memastikan dan memperbaiki
+
+1. Buka `.env` di root project.
+2. Pastikan ada baris ini (tambahkan kalau belum ada):
+
+   ```dotenv
+   DB_BACKEND=mysql
+   ```
+
+3. `DATABASE_URL` **boleh dibiarkan** — akan diabaikan selama `DB_BACKEND=mysql`.
+   Kalau ingin benar-benar bersih, hapus saja baris `DATABASE_URL` atau beri
+   tanda komentar (`#`).
+4. **Restart API** (Ctrl+C lalu jalankan ulang), karena backend dipilih saat start.
+5. Cek ulang:
+
+   ```bash
+   curl http://localhost:8000/health
+   ```
+
+   Harus muncul:
+
+   ```json
+   {"status":"ok","database":"connected","backend":"mysql","version":"1.1.0",...}
+   ```
+
+6. Buka dashboard, login admin, lalu lihat stok/riwayat. Kalau angkanya sama
+   dengan hasil migrasi MySQL, berarti sudah benar.
+
+> Kalau `backend` sudah `mysql` tetapi data terasa aneh, cek database mana yang
+> dibaca: `MYSQL_DATABASE` di `.env` harus `nuansa_wangi`, dan MySQL yang hidup
+> harus yang di `MYSQL_PORT` (default `3306`).
 
 ---
 
@@ -393,9 +472,13 @@ lalu restart server.
 
 ---
 
-## 8. Kalau database-nya PostgreSQL / Supabase
+## 8. Lampiran (opsional) — kalau database-nya PostgreSQL / Supabase
 
-Panduan di atas khusus MySQL. Untuk PostgreSQL, caranya berbeda sedikit:
+> **Tidak perlu dibaca kalau kamu memakai MySQL/Laragon.** Bagian ini hanya
+> catatan singkat untuk pemakaian Supabase, supaya panduan tetap lengkap.
+> Kalau kamu mengikuti panduan ini dari awal, lewati saja.
+
+Panduan utama di atas khusus MySQL. Untuk PostgreSQL, caranya berbeda sedikit:
 
 1. Buka project Supabase -> **SQL Editor** -> **New query**.
 2. Tempel seluruh isi `database/schema.sql` -> **Run**.
@@ -423,6 +506,8 @@ yang sudah dirotasi.
 | `ERROR 1045 (28000): Access denied` | User/password salah | Default Laragon: `-u root` tanpa password. Kalau ada password, tambah `-p` |
 | `ERROR 2003 / Can't connect to MySQL server` | MySQL belum jalan / port beda | Laragon -> **Start All**. Cek port di Laragon, mis. `3307` -> pakai `-P 3307` |
 | `Unknown column 'api_key_hash'` saat API jalan | Script migrasi belum dijalankan | Ulangi langkah 3, lalu restart API |
+| `/health` bilang `"backend":"postgres"` padahal sudah setup MySQL | `.env` tidak punya `DB_BACKEND=mysql` dan masih ada `DATABASE_URL`, jadi aplikasi memilih PostgreSQL otomatis | Tambahkan `DB_BACKEND=mysql` di `.env`, restart API. Lihat [0.1](#01-kalau-aplikasi-masih-nyambung-ke-supabase) |
+| Data di dashboard tidak berubah setelah migrasi MySQL | Aplikasi membaca database lain (Supabase) | Sama seperti di atas: pastikan `"backend":"mysql"` di `/health` |
 | `No database selected` di phpMyAdmin | Import tanpa memilih DB | Pilih `nuansa_wangi` di sidebar lalu ulangi, atau pakai CLI |
 | Duplicate key saat tes | Database sudah pernah dipakai tes | Jalankan `database/reset_demo.mysql.sql`, lalu tes lagi |
 | PowerShell error `'<' operator is reserved` | `<` tidak didukung PowerShell | Pakai `cmd /c "mysql -u root < database\schema.mysql.sql"` |
@@ -459,6 +544,7 @@ ALTER TABLE branches DROP COLUMN api_key_hash;
 - [ ] `branches_with_key` = 3
 - [ ] Stok & jumlah riwayat sama seperti sebelum migrasi
 - [ ] `.env` berisi `DB_BACKEND=mysql`, kredensial MySQL, `ADMIN_API_KEY`
+- [ ] `.env` **tidak** hasil copy dari komputer lain (atau sudah ditambah `DB_BACKEND=mysql`)
 - [ ] `pip install -r server/requirements-mysql.txt`
 - [ ] `/health` -> `"database":"connected","backend":"mysql"`
 - [ ] Dashboard bisa login
