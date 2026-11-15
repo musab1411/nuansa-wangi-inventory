@@ -14,7 +14,7 @@ Skenario:
 Cara pakai:
   python test_scenarios.py            # semua skenario
   python test_scenarios.py 2          # hanya skenario 2
-  API_URL=http://localhost:8000 python test_scenarios.py
+  API_URL=http://127.0.0.1:8000 python test_scenarios.py
 
 Kunci API diambil dari environment variable, dengan default kunci DEMO yang
 sama seperti di database/schema.sql:
@@ -33,7 +33,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "30"))
 DEAD_URL = "http://127.0.0.1:9"  # port 9 hampir pasti tertutup -> simulasi server mati
 

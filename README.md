@@ -116,13 +116,13 @@ Semua container harus berstatus `running` / `healthy`.
 
 ### Langkah 5 - Verifikasi
 ```bash
-curl http://localhost:8000/health        # {"status":"ok","database":"connected"}
-curl -H "X-API-Key: nw-demo-branch-a-7f3a9c1e" http://localhost:8000/items
+curl http://127.0.0.1:8000/health        # {"status":"ok","database":"connected"}
+curl -H "X-API-Key: nw-demo-branch-a-7f3a9c1e" http://127.0.0.1:8000/items
 docker compose logs branch-a             # [Cabang Empang | branch-a] -> http://api:8000/health : HTTP 200 ...
 ```
-- Swagger UI: **http://localhost:8000/docs** (klik **Authorize**, isi API key).
-- Dashboard web: **http://localhost:8000/dashboard** (masukkan kunci cabang atau admin).
-- Metrik: **http://localhost:8000/metrics**.
+- Swagger UI: **http://127.0.0.1:8000/docs** (klik **Authorize**, isi API key).
+- Dashboard web: **http://127.0.0.1:8000/dashboard** (masukkan kunci cabang atau admin).
+- Metrik: **http://127.0.0.1:8000/metrics**.
 
 ### Langkah 6 - Matikan
 ```bash
@@ -182,7 +182,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 File `.env` di root project dibaca otomatis lewat `python-dotenv`, jadi tidak perlu
 mengatur environment variable secara manual.
-Cek: `curl http://localhost:8000/health` harus membalas
+Cek: `curl http://127.0.0.1:8000/health` harus membalas
 `{"status":"ok","database":"connected","backend":"mysql"}`.
 
 **Langkah 6 - Jalankan pengujian**
@@ -234,8 +234,8 @@ docker compose exec branch-a python test_scenarios.py 2      # hanya skenario 2
 **Cara B - dari host:**
 ```bash
 pip install requests
-python client/test_scenarios.py          # target default http://localhost:8000
-# atau: API_URL=http://localhost:8000 python client/test_scenarios.py 3
+python client/test_scenarios.py          # target default http://127.0.0.1:8000
+# atau: API_URL=http://127.0.0.1:8000 python client/test_scenarios.py 3
 ```
 Test memakai kunci demo yang sama dengan seed database. Untuk database yang kuncinya
 sudah dirotasi, set environment variable:
@@ -459,7 +459,7 @@ ADMIN_API_KEY=nw-demo-admin-4d2f8b6c   # kosongkan untuk mematikan endpoint admi
 
 ## 12. Dashboard Web
 
-Buka **http://localhost:8000/dashboard** (atau `https://localhost:8443/dashboard`
+Buka **http://127.0.0.1:8000/dashboard** (atau `https://localhost:8443/dashboard`
 kalau memakai HTTPS). Dashboard adalah HTML/CSS/JS biasa dari `server/static/`,
 tanpa build step dan tanpa CDN.
 

@@ -26,7 +26,10 @@ import uuid
 
 import requests
 
-API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
+# 127.0.0.1 dipakai sebagai default, bukan localhost: di Windows localhost
+# dipetakan ke IPv6 (::1) lebih dahulu sehingga setiap request bisa tertunda
+# sekitar 2 detik sebelum fallback ke IPv4.
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 BRANCH_ID = os.getenv("BRANCH_ID", "branch-a")
 BRANCH_NAME = os.getenv("BRANCH_NAME", BRANCH_ID)
 BRANCH_API_KEY = os.getenv("BRANCH_API_KEY", "").strip()
